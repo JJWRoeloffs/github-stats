@@ -91,7 +91,7 @@ class Queries(object):
                 if r_async.status == 202:
                     # print(f"{path} returned 202. Retrying...")
                     print(f"A path returned 202. Retrying...")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(5)
                     continue
 
                 result = await r_async.json()
