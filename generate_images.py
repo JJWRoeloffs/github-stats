@@ -6,20 +6,7 @@ import re
 
 import aiohttp
 
-from github_stats import Stats
-
-
-################################################################################
-# Helper Functions
-################################################################################
-
-
-def generate_output_folder() -> None:
-    """
-    Create the output folder if it does not already exist
-    """
-    if not os.path.isdir("generated"):
-        os.mkdir("generated")
+from github_stats import Stats, generate_output_folder
 
 
 ################################################################################
@@ -130,6 +117,7 @@ async def main() -> None:
             ignore_forked_repos=ignore_forked_repos,
         )
         await asyncio.gather(generate_languages(s), generate_overview(s))
+        s.write_known_good()
 
 
 if __name__ == "__main__":

@@ -2,10 +2,46 @@
 
 import asyncio
 import os
+import json
 from typing import Dict, List, Optional, Set, Tuple, Any, cast
 
 import aiohttp
 import requests
+
+
+################################################################################
+# Helper Functions
+################################################################################
+
+
+def generate_output_folder() -> None:
+    """
+    Create the output folder if it does not already exist
+    """
+    if not os.path.isdir("generated"):
+        os.mkdir("generated")
+
+
+def get_known_good() -> Dict[str, Any]:
+    """
+    Get the last known good outputs, or an empty dict if no valid one is found.
+    """
+    try:
+        with open("generated/known_good.json") as f:
+            return json.load(f)
+    except Exception:
+        # This instead of a os.path.isfile() check because this also catches malformed json
+        # and other things that might go wrong
+        return dict()
+
+
+def write_known_good(known_good: Dict[str, Any]):
+    """
+    Write the current status of the known good files back to a json file.
+    """
+    generate_output_folder()
+    with open("generated/known_good.json", "w") as f:
+        json.dump(known_good, f)
 
 
 ###############################################################################
@@ -264,6 +300,7 @@ class Stats(object):
         self._exclude_repos = set() if exclude_repos is None else exclude_repos
         self._exclude_langs = set() if exclude_langs is None else exclude_langs
         self.queries = Queries(username, access_token, session)
+        self._known_good = get_known_good()
 
         self._name: Optional[str] = None
         self._stargazers: Optional[int] = None
@@ -377,7 +414,7 @@ Languages:
         # TODO: Improve languages to scale by number of contributions to
         #       specific filetypes
         langs_total = sum([v.get("size", 0) for v in self._languages.values()])
-        for k, v in self._languages.items():
+        for v in self._languages.values():
             v["prop"] = 100 * (v.get("size", 0) / langs_total)
 
     @property
@@ -385,9 +422,10 @@ Languages:
         """
         :return: GitHub user's name (e.g., Jacob Strieb)
         """
-        if self._name is not None:
-            return self._name
-        await self.get_stats()
+        if self._name is None:
+            await self.get_stats()
+        self._name = self._name or self._known_good.get("name", "")
+        self._known_good["name"] = self._name
         assert self._name is not None
         return self._name
 
@@ -396,9 +434,10 @@ Languages:
         """
         :return: total number of stargazers on user's repos
         """
-        if self._stargazers is not None:
-            return self._stargazers
-        await self.get_stats()
+        if self._stargazers is None:
+            await self.get_stats()
+        self._stargazers = self._stargazers or self._known_good.get("stargazers", 0)
+        self._known_good["stargazers"] = self._stargazers
         assert self._stargazers is not None
         return self._stargazers
 
@@ -407,32 +446,35 @@ Languages:
         """
         :return: total number of forks on user's repos
         """
-        if self._forks is not None:
-            return self._forks
-        await self.get_stats()
+        if self._forks is None:
+            await self.get_stats()
+        self._forks = self._forks or self._known_good.get("forks", 0)
+        self._known_good["forks"] = self._forks
         assert self._forks is not None
         return self._forks
 
     @property
     async def languages(self) -> Dict:
         """
+        Note: Doesn't interact with known_good because I have never seen the GH API fail it,
+        and so have no idea how it fails.
         :return: summary of languages used by the user
         """
-        if self._languages is not None:
-            return self._languages
-        await self.get_stats()
+        if self._languages is None:
+            await self.get_stats()
         assert self._languages is not None
         return self._languages
 
     @property
     async def languages_proportional(self) -> Dict:
         """
+        Note: Doesn't interact with known_good because I have never seen the GH API fail it,
+        and so have no idea how it fails.
         :return: summary of languages used by the user, with proportional usage
         """
         if self._languages is None:
             await self.get_stats()
-            assert self._languages is not None
-
+        assert self._languages is not None
         return {k: v.get("prop", 0) for (k, v) in self._languages.items()}
 
     @property
@@ -440,9 +482,8 @@ Languages:
         """
         :return: list of names of user's repos
         """
-        if self._repos is not None:
-            return self._repos
-        await self.get_stats()
+        if self._repos is None:
+            await self.get_stats()
         assert self._repos is not None
         return self._repos
 
@@ -454,7 +495,7 @@ Languages:
         if self._total_contributions is not None:
             return self._total_contributions
 
-        self._total_contributions = 0
+        total_contributions = 0
         years = (
             (await self.queries.query(Queries.contrib_years()))
             .get("data", {})
@@ -469,10 +510,14 @@ Languages:
             .values()
         )
         for year in by_year:
-            self._total_contributions += year.get("contributionCalendar", {}).get(
+            total_contributions += year.get("contributionCalendar", {}).get(
                 "totalContributions", 0
             )
-        return cast(int, self._total_contributions)
+        self._total_contributions = cast(
+            int, total_contributions or self._known_good.get("total_contributions", 0)
+        )
+        self._known_good["total_contributions"] = self._total_contributions
+        return self._total_contributions
 
     @property
     async def lines_changed(self) -> Tuple[int, int]:
@@ -499,13 +544,16 @@ Languages:
                     additions += week.get("a", 0)
                     deletions += week.get("d", 0)
 
-        self._lines_changed = (additions, deletions)
+        known_add, known_del = self._known_good.get("lines_changed", [0, 0])
+        self._lines_changed = (additions or known_add, deletions or known_del)
+        self._known_good["lines_changed"] = self._lines_changed
         return self._lines_changed
 
     @property
     async def views(self) -> int:
         """
         Note: only returns views for the last 14 days (as-per GitHub API)
+        Note: Does not interact with "known good" for this reason.
         :return: total number of page views the user's projects have received
         """
         if self._views is not None:
@@ -519,6 +567,9 @@ Languages:
 
         self._views = total
         return total
+
+    def write_known_good(self):
+        write_known_good(self._known_good)
 
 
 ###############################################################################
